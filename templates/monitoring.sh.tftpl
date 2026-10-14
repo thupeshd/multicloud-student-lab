@@ -1,0 +1,133 @@
+# Appended to the GCP startup script. All monitoring runs in the cloud.
+apt-get -o Acquire::Retries=5 install -y prometheus prometheus-alertmanager prometheus-blackbox-exporter
+install -d -m 755 /etc/apt/keyrings
+curl -fsSL https://apt.grafana.com/gpg-full.key -o /etc/apt/keyrings/grafana.asc
+echo 'deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main' >/etc/apt/sources.list.d/grafana.list
+apt-get -o Acquire::Retries=5 update
+apt-get -o Acquire::Retries=5 install -y grafana
+cat >/etc/default/prometheus <<'ENV'
+ARGS="--web.listen-address=127.0.0.1:9090 --storage.tsdb.retention.time=3d --storage.tsdb.retention.size=512MB"
+ENV
+cat >/etc/default/prometheus-alertmanager <<'ENV'
+ARGS="--web.listen-address=127.0.0.1:9093 --cluster.listen-address="
+ENV
+cat >/etc/default/prometheus-blackbox-exporter <<'ENV'
+ARGS="--web.listen-address=127.0.0.1:9115 --config.file=/etc/prometheus/blackbox.yml"
+ENV
+cat >/etc/prometheus/blackbox.yml <<'YAML'
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+YAML
+cat >/etc/prometheus/prometheus.yml <<'YAML'
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+rule_files:
+  - /etc/prometheus/lab-alerts.yml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['127.0.0.1:9093']
+scrape_configs:
+  - job_name: nodes
+    static_configs:
+      - targets: ['${aws_ip}:9100']
+        labels: {cloud: AWS}
+      - targets: ['${azure_ip}:9100']
+        labels: {cloud: Azure}
+      - targets: ['127.0.0.1:9100']
+        labels: {cloud: GCP}
+  - job_name: http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://${aws_ip}/health']
+        labels: {cloud: AWS}
+      - targets: ['http://${azure_ip}/health']
+        labels: {cloud: Azure}
+      - targets: ['http://127.0.0.1/health']
+        labels: {cloud: GCP}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+YAML
+cat >/etc/prometheus/lab-alerts.yml <<'YAML'
+groups:
+  - name: student-lab
+    rules:
+      - alert: NodeDown
+        expr: up{job="nodes"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: 'A cloud node cannot be scraped'
+      - alert: ApplicationDown
+        expr: probe_success{job="http"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: 'Application health endpoint failed'
+      - alert: HighCPU
+        expr: 100 * (1 - avg by (instance, cloud) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'CPU usage exceeds 85 percent'
+      - alert: LowMemory
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Available memory below 10 percent'
+      - alert: LowDiskSpace
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: 'Root filesystem free space below 15 percent'
+YAML
+# Notifications are disabled until the student supplies a receiver securely.
+if [ ! -f /etc/prometheus/lab-alertmanager-configured ]; then
+  cat >/etc/prometheus/alertmanager.yml <<'YAML'
+route:
+  receiver: dashboard-only
+  group_by: [alertname, cloud]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: dashboard-only
+YAML
+fi
+cat >/etc/grafana/grafana.ini <<'INI'
+[server]
+http_addr = 127.0.0.1
+[users]
+allow_sign_up = false
+[auth.anonymous]
+enabled = false
+INI
+install -d -m 755 /etc/grafana/provisioning/datasources
+cat >/etc/grafana/provisioning/datasources/prometheus.yml <<'YAML'
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: lab-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+YAML
+promtool check config /etc/prometheus/prometheus.yml
+systemctl enable prometheus prometheus-alertmanager prometheus-blackbox-exporter grafana-server
+systemctl restart prometheus-blackbox-exporter prometheus-alertmanager prometheus grafana-server

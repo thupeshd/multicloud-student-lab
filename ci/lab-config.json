@@ -1,0 +1,23 @@
+{
+  "backend": {
+    "bucket": "REPLACE-STATE-BUCKET",
+    "key": "multicloud/lab.tfstate",
+    "region": "us-east-1",
+    "encrypt": true,
+    "use_lockfile": true
+  },
+  "terraform": {
+    "name": "REPLACE-LAB-NAME",
+    "admin_cidr": "203.0.113.10/32",
+    "azure_subscription_id": "REPLACE-SUBSCRIPTION-ID",
+    "gcp_project_id": "REPLACE-PROJECT-ID",
+    "aws_region": "us-east-1",
+    "azure_location": "eastus",
+    "gcp_region": "us-central1",
+    "gcp_zone": "us-central1-a",
+    "aws_instance_type": "t3.micro",
+    "azure_vm_size": "Standard_B1s",
+    "gcp_machine_type": "e2-small",
+    "routing_method": "Priority"
+  }
+}

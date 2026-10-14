@@ -1,0 +1,67 @@
+name: Terraform cloud session
+description: Configure short-lived cloud credentials and initialize the existing lab state.
+inputs:
+  aws-role-arn:
+    required: true
+    description: AWS OIDC deployment role ARN
+  aws-region:
+    required: true
+    description: AWS backend region
+  azure-client-id:
+    required: true
+    description: Azure application client ID
+  azure-tenant-id:
+    required: true
+    description: Azure tenant ID
+  gcp-provider:
+    required: true
+    description: Full GCP workload identity provider resource name
+  gcp-service-account:
+    required: true
+    description: GCP deployment service account email
+runs:
+  using: composite
+  steps:
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: '1.16.0'
+        terraform_wrapper: false
+    - name: Prepare configuration
+      shell: bash
+      run: python3 ci/prepare.py
+    - uses: aws-actions/configure-aws-credentials@v6.3.0
+      with:
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+        role-duration-seconds: 3600
+        role-session-name: multicloud-${{ github.run_id }}
+    - uses: google-github-actions/auth@v3
+      with:
+        workload_identity_provider: ${{ inputs.gcp-provider }}
+        service_account: ${{ inputs.gcp-service-account }}
+        create_credentials_file: true
+        export_environment_variables: true
+    - name: Configure native Azure Terraform OIDC
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.azure-client-id }}
+        TENANT_ID: ${{ inputs.azure-tenant-id }}
+      run: |
+        python3 - <<'PY'
+        import os
+        values = {
+            'ARM_CLIENT_ID': os.environ['CLIENT_ID'],
+            'ARM_TENANT_ID': os.environ['TENANT_ID'],
+            'ARM_USE_OIDC': 'true',
+            'ARM_USE_CLI': 'false',
+            'ARM_RESOURCE_PROVIDER_REGISTRATIONS': 'none',
+        }
+        with open(os.environ['GITHUB_ENV'], 'a') as f:
+            for key, value in values.items():
+                if not value or '\n' in value or '\r' in value:
+                    raise SystemExit(f'Missing or invalid {key}')
+                f.write(f'{key}={value}\n')
+        PY
+    - name: Initialize existing remote state
+      shell: bash
+      run: terraform init -input=false -lockfile=readonly -backend-config=ci-backend.json

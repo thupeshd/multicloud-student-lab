@@ -1,0 +1,50 @@
+{
+  "title": "Multi-cloud Student Lab",
+  "uid": "multicloud-student-lab",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node reachable (1 = yes)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 6 },
+      "targets": [{ "refId": "A", "expr": "up{job=\"nodes\"}", "legendFormat": "{{cloud}}", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "HTTP health (1 = healthy)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 6 },
+      "targets": [{ "refId": "A", "expr": "probe_success{job=\"http\"}", "legendFormat": "{{cloud}}", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "title": "CPU utilisation",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 9 },
+      "targets": [{ "refId": "A", "expr": "100 * (1 - avg by (cloud) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))", "legendFormat": "{{cloud}}" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "Available memory",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "lab-prometheus" },
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 9 },
+      "targets": [{ "refId": "A", "expr": "100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes", "legendFormat": "{{cloud}}" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    }
+  ]
+}

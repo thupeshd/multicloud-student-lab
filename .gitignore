@@ -1,0 +1,15 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+crash.log
+backend.hcl
+*.pem
+*.key
+*.tfvars.json
+ci-backend.json
+gha-creds-*.json
+reviewed-plan/
+source-run.json
+__pycache__/

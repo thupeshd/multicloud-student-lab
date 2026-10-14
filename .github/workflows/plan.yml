@@ -1,0 +1,86 @@
+name: Plan cloud changes
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Deploy/update the lab, or destroy the lab
+        type: choice
+        options: [deploy, destroy]
+        default: deploy
+      confirm_lab:
+        description: Enter the exact lab name from ci/lab-config.json
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: multicloud-lab-state
+  cancel-in-progress: false
+env:
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main' && github.event.repository.private == true
+    environment: lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check requested lab
+        env:
+          CONFIRM_LAB: ${{ inputs.confirm_lab }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          config = json.load(open('ci/lab-config.json'))
+          if os.environ['CONFIRM_LAB'] != config['terraform']['name']:
+              raise SystemExit('Lab name does not match configuration')
+          PY
+      - uses: ./.github/actions/terraform-session
+        with:
+          aws-role-arn: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          gcp-provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          gcp-service-account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - name: Validate and save plan
+        env:
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform validate
+          mkdir -p reviewed-plan
+          args=()
+          if [ "$OPERATION" = destroy ]; then args+=(-destroy); fi
+          terraform plan "${args[@]}" -input=false -lock-timeout=5m -out=reviewed-plan/lab.tfplan
+          terraform show -no-color reviewed-plan/lab.tfplan > reviewed-plan/plan.txt
+          python3 - <<'PY'
+          import hashlib, json, os, time
+          from pathlib import Path
+          plan = Path('reviewed-plan/lab.tfplan')
+          manifest = {
+              'commit': os.environ['GITHUB_SHA'],
+              'operation': os.environ['OPERATION'],
+              'lab': os.environ['LAB_NAME'],
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'created': int(time.time()),
+              'sha256': hashlib.sha256(plan.read_bytes()).hexdigest(),
+          }
+          Path('reviewed-plan/manifest.json').write_text(json.dumps(manifest, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(f"Plan run ID: **{manifest['run_id']}**\n\n")
+              f.write(f"Operation: **{manifest['operation']}**; commit: `{manifest['commit']}`\n\n")
+              f.write('Review the Terraform plan above or download plan.txt. Nothing was applied.\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-plan
+          path: reviewed-plan/
+          retention-days: 1
+          if-no-files-found: error
